@@ -1,25 +1,45 @@
+import time
 import requests
 
 
-def get_binance_prices():
+BINANCE_URL = "https://api.binance.com/api/v3/ticker/24hr"
 
-    url = "https://api.binance.com/api/v3/ticker/24hr"
 
-    response = requests.get(url)
+def get_binance_prices(max_retries=5, timeout=10):
+    """Fetch and normalize Binance spot tickers with retry/backoff."""
+    last_error = None
 
-    data = response.json()
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = requests.get(BINANCE_URL, timeout=timeout)
+            response.raise_for_status()
+            data = response.json()
 
-    normalized_data = []
+            normalized_data = []
+            for item in data:
+                symbol = item.get("symbol")
+                if not symbol:
+                    continue
 
-    for item in data:
+                last_price = float(item.get("lastPrice", 0) or 0)
+                quote_volume_24h = float(item.get("quoteVolume", 0) or 0)
 
-        normalized_item = {
-            "exchange": "binance",
-            "symbol": item["symbol"],
-            "price": float(item["lastPrice"]),
-"volume": float(item["quoteVolume"])
-        }
+                if last_price <= 0:
+                    continue
 
-        normalized_data.append(normalized_item)
+                normalized_data.append({
+                    "exchange": "binance",
+                    "symbol": symbol.upper(),
+                    "price": last_price,
+                    "volume_24h_quote": quote_volume_24h,
+                })
 
-    return normalized_data
+            return normalized_data
+        except (requests.RequestException, ValueError) as exc:
+            last_error = exc
+            sleep_s = min(2 ** (attempt - 1), 10)
+            print(f"[BINANCE REST] retry {attempt}/{max_retries} after error: {exc}")
+            time.sleep(sleep_s)
+
+    print(f"[BINANCE REST] failed after retries: {last_error}")
+    return []
